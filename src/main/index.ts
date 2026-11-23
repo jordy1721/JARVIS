@@ -11,7 +11,11 @@ import { startActivityTracker, startScheduler } from './services/scheduler'
 import { dayKey, usageSummary } from './services/usage'
 import * as win from './windows'
 
-if (!app.requestSingleInstanceLock()) app.quit()
+if (!app.requestSingleInstanceLock()) {
+  console.log('[JARVIS] Another copy of JARVIS is already running, so this one will exit and show that one instead.')
+  console.log('[JARVIS] If that window is blank, quit it from the tray icon (right-click > Quit) and start again.')
+  app.quit()
+}
 app.on('second-instance', () => win.showMain())
 
 let tray: Tray | null = null
@@ -105,7 +109,15 @@ async function undoLastChange(): Promise<string> {
   if (!c) return 'There is no applied code change that can be undone.'
   await revertChange(c.id)
   win.sendMain('code:changed')
-  setTimeout(() => win.getMainWindow()?.webContents.reload(), 1500)
+  if (process.env.ELECTRON_RENDERER_URL) setTimeout(() => win.getMainWindow()?.webContents.reload(), 1500)
+  else {
+    // Running from a build: restart so both the screen and the main process use the restored code.
+    setTimeout(() => {
+      win.setQuitting()
+      app.relaunch()
+      app.exit(0)
+    }, 800)
+  }
   return `Undid "${c.title}".`
 }
 

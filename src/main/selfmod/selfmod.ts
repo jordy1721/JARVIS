@@ -182,6 +182,24 @@ function typecheck(root: string): Promise<string | null> {
   )
 }
 
+/**
+ * When JARVIS runs from a build (npm start) rather than the dev server, rebuild so the
+ * change takes effect on restart. Returns error text, or null if OK.
+ */
+function rebuild(root: string): Promise<string | null> {
+  if (process.env.ELECTRON_RENDERER_URL) return Promise.resolve(null) // dev server reloads by itself
+  const cli = path.join(root, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js')
+  if (!fs.existsSync(cli)) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [cli, 'build'],
+      { cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 300_000, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout, stderr) => resolve(err ? (stdout + stderr).trim().slice(-4000) || String(err) : null)
+    )
+  })
+}
+
 export async function applyChange(id: string, onStatus?: (msg: string) => void): Promise<CodeChange> {
   const change = codeChanges.get(id)
   if (!change || change.status !== 'pending') throw new Error('Change not found or not pending')
@@ -204,6 +222,17 @@ export async function applyChange(id: string, onStatus?: (msg: string) => void):
       codeChanges.update(id, {
         status: 'failed',
         error: `The change had code errors, so it was undone automatically and nothing changed.\n\n${errors}`
+      })
+      return codeChanges.get(id)!
+    }
+    onStatus?.('Building the new version…')
+    const buildErrors = await rebuild(root)
+    if (buildErrors) {
+      restoreBackup(id)
+      await rebuild(root)
+      codeChanges.update(id, {
+        status: 'failed',
+        error: `The change didn't build, so it was undone automatically and nothing changed.\n\n${buildErrors}`
       })
       return codeChanges.get(id)!
     }
@@ -243,9 +272,11 @@ export async function revertChange(id: string): Promise<CodeChange> {
   if (!change || change.status !== 'applied') throw new Error('Only applied changes can be undone')
   if (fs.existsSync(backupFile(id))) {
     restoreBackup(id)
+    await rebuild(requireRoot())
   } else if (change.commit) {
     const root = requireRoot()
     await git(root, ['-c', 'user.name=JARVIS', '-c', 'user.email=jarvis@localhost', 'revert', '--no-edit', change.commit])
+    await rebuild(root)
   } else {
     throw new Error('No backup of this change exists, so it cannot be undone automatically.')
   }

@@ -1,5 +1,6 @@
 import { BrowserWindow, screen, shell, app } from 'electron'
 import path from 'node:path'
+import fs from 'node:fs'
 import type { GuidePayload, GuideStep, HudPayload } from '@shared/types'
 import { shotScaleToDip } from './computer/control'
 
@@ -95,12 +96,25 @@ export function setRendererStuckHandler(fn: (errors: string[]) => void): void {
   onStuck = fn
 }
 export function markRendererReady(): void {
+  if (!rendererReady) log('[screen] ready')
   rendererReady = true
   clearTimeout(watchdog)
 }
 export function noteRendererError(msg: string): void {
   recentErrors.push(msg.slice(0, 500))
   if (recentErrors.length > 8) recentErrors.shift()
+  log(`[screen error] ${msg}`)
+}
+
+/** Problems are printed in the start-jarvis window and saved to jarvis.log in the app-data folder. */
+export function log(msg: string): void {
+  const line = `${new Date().toISOString()} ${msg}`
+  console.log(line)
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'jarvis.log'), line + '\n')
+  } catch {
+    /* ignore */
+  }
 }
 
 function armWatchdog(win: BrowserWindow) {
@@ -110,14 +124,22 @@ function armWatchdog(win: BrowserWindow) {
   })
   win.webContents.on('did-finish-load', () => {
     clearTimeout(watchdog)
+    log(`[screen] loaded ${win.webContents.getURL()}`)
     watchdog = setTimeout(() => {
-      if (!rendererReady) onStuck?.([...recentErrors])
+      if (!rendererReady) {
+        log('[screen] did not finish rendering within 20 s')
+        onStuck?.([...recentErrors])
+      }
     }, 20_000)
   })
   win.webContents.on('console-message', (e) => {
     const ev = e as unknown as { level?: string | number; message?: string }
     if (ev.level === 'error' || ev.level === 3) noteRendererError(String(ev.message ?? ''))
   })
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    noteRendererError(`Could not load ${url}: ${desc} (${code})`)
+  })
+  win.webContents.on('preload-error', (_e, p, err) => noteRendererError(`Preload failed (${p}): ${err.message}`))
   win.webContents.on('render-process-gone', (_e, details) => {
     noteRendererError(`Renderer crashed: ${details.reason}`)
     onStuck?.([...recentErrors])

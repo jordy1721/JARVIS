@@ -36,8 +36,13 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 }
 Say "Node.js $(node --version) found."
 
-# 2. Stop a running JARVIS so files aren't locked
-Get-Process -Name 'electron' -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Target*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+# 2. Stop every JARVIS that is still running (closing the window only hides it in the tray,
+#    and an old copy left running would be shown instead of the new one).
+Say 'Closing any JARVIS that is still running...'
+Get-CimInstance Win32_Process |
+  Where-Object { ($_.Name -eq 'electron.exe' -or $_.Name -eq 'node.exe') -and $_.CommandLine -match 'JARVIS' -and $_.CommandLine -match 'electron' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 1
 
 # 3. Download the latest version
 $tmp = Join-Path $env:TEMP ("jarvis-" + [guid]::NewGuid().ToString('N'))
