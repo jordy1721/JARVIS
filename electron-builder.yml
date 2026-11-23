@@ -1,0 +1,20 @@
+appId: com.jarvis.assistant
+productName: JARVIS
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - node_modules/@nut-tree-fork/**
+mac:
+  category: public.app-category.productivity
+  extendInfo:
+    NSMicrophoneUsageDescription: JARVIS listens to your voice commands.
+    NSAppleEventsUsageDescription: JARVIS controls other apps on your behalf.
+    NSScreenCaptureUsageDescription: JARVIS looks at your screen to help you.
+win:
+  target: nsis
+linux:
+  target: AppImage

@@ -1,0 +1,43 @@
+:root {
+  --accent: #38e1ff;
+  --orb-core: #e9fbff;
+}
+.orb {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 18px rgba(56, 225, 255, 0.35));
+  transition: filter 0.3s;
+}
+.orb:hover {
+  filter: drop-shadow(0 0 26px rgba(56, 225, 255, 0.6));
+}
+.orb svg {
+  display: block;
+  overflow: visible;
+}
+.orb-ring {
+  transform-origin: 100px 100px;
+  transform-box: view-box;
+}
+.orb .r1 { animation: orb-spin 14s linear infinite; }
+.orb .r2 { animation: orb-spin 22s linear infinite reverse; }
+.orb .r3 { animation: orb-spin 40s linear infinite; }
+.orb-core { transition: r 0.08s linear; animation: orb-breathe 4s ease-in-out infinite; transform-origin: 100px 100px; transform-box: view-box; }
+.orb-thinking .r1, .orb-acting .r1 { animation-duration: 2s; }
+.orb-thinking .r2, .orb-acting .r2 { animation-duration: 3s; }
+.orb-thinking .r3, .orb-acting .r3 { animation-duration: 5s; }
+.orb-listening { filter: drop-shadow(0 0 30px rgba(56, 225, 255, 0.85)); }
+.orb-speaking .orb-core { animation: orb-talk 0.6s ease-in-out infinite; }
+.orb-acting { --accent: #ffb547; filter: drop-shadow(0 0 22px rgba(255, 181, 71, 0.5)); }
+.orb-transcribing .r2 { animation-duration: 1.5s; }
+
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+@keyframes orb-breathe { 50% { opacity: 0.75; transform: scale(0.94); } }
+@keyframes orb-talk { 50% { transform: scale(1.12); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .orb .r1, .orb .r2, .orb .r3, .orb-core { animation: none !important; }
+}
