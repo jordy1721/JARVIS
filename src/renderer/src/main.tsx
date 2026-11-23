@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import type { ChatEntry, ConfirmRequest, Settings, Task } from '@shared/types'
+import type { ChatEntry, ConfirmRequest, ConnectionStatus, Settings, Task } from '@shared/types'
 import { App } from './App'
 import { api, getState, setState, toast, type Page } from './store'
 import { voice } from './voice/instance'
@@ -52,9 +52,9 @@ api.on('reminder', (t: Task) => {
 api.on('code:changed', () => toast('A code change is waiting for your review in Code Lab'))
 
 // ---------------- Boot ----------------
-Promise.all([api.invoke<Settings>('settings:get'), api.invoke<ChatEntry[]>('chat:history'), api.invoke<boolean>('secret:has', 'anthropic')]).then(
-  ([s, chat, hasKey]) => {
-    setState({ chat, page: hasKey ? 'dashboard' : 'settings' })
+Promise.all([api.invoke<Settings>('settings:get'), api.invoke<ChatEntry[]>('chat:history'), api.invoke<ConnectionStatus>('claude:status')]).then(
+  ([s, chat, conn]) => {
+    setState({ chat, page: conn.ready ? 'dashboard' : 'settings' })
     applySettings(s)
   }
 )

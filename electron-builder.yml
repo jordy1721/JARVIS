@@ -8,6 +8,7 @@ files:
   - package.json
 asarUnpack:
   - node_modules/@nut-tree-fork/**
+  - out/main/mcp-bridge.js
 mac:
   category: public.app-category.productivity
   extendInfo:

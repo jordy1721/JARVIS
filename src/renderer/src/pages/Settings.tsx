@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import type { Settings } from '@shared/types'
+import type { ConnectionStatus, Settings } from '@shared/types'
 import { api, toast, useStore } from '../store'
 import { listVoices, speak } from '../voice/tts'
 
@@ -8,6 +8,11 @@ const MODELS = [
   ['claude-sonnet-5-5', 'Claude Sonnet 5.5 — $2 / $10'],
   ['claude-opus-5-5', 'Claude Opus 5.5 — $4 / $20'],
   ['claude-fable-5-2', 'Claude Fable 5.2 — $8 / $40 (most capable)']
+]
+const SUB_MODELS = [
+  ['haiku', 'Haiku — fastest, uses the least of your plan'],
+  ['sonnet', 'Sonnet — balanced'],
+  ['opus', 'Opus — smartest, uses your plan fastest']
 ]
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const STT = [
@@ -80,24 +85,7 @@ export function SettingsPage() {
         <h2>Settings</h2>
       </header>
 
-      <Section title="Connection" desc="JARVIS uses Claude through your own Anthropic API key. Get one at console.anthropic.com. The key is encrypted with your system keychain.">
-        <Field label="Anthropic API key" hint={hasKey ? 'A key is saved ✓' : 'Required'}>
-          <div className="row">
-            <input type="password" className="grow" placeholder={hasKey ? '•••••••• (saved)' : 'sk-ant-…'} value={key} onChange={(e) => setKey(e.target.value)} />
-            <button
-              className="btn primary"
-              onClick={async () => {
-                await api.invoke('secret:set', 'anthropic', key)
-                setKey('')
-                setHasKey(!!key)
-                toast(key ? 'API key saved' : 'API key removed')
-              }}
-            >
-              Save
-            </button>
-          </div>
-        </Field>
-      </Section>
+      <Connection settings={s} set={set} hasKey={hasKey} setHasKey={setHasKey} apiKey={key} setApiKey={setKey} />
 
       <Section title="Personal">
         <Field label="Your name">{text('userName', 'What should I call you?')}</Field>
@@ -110,8 +98,12 @@ export function SettingsPage() {
       </Section>
 
       <Section
-        title="Cost control"
-        desc="Most requests go to the cheap fast model. The smart model is used only for hard requests (coding, analysis, self-modification) or when the fast model asks for help."
+        title={s.provider === 'subscription' ? 'Usage control' : 'Cost control'}
+        desc={
+          s.provider === 'subscription'
+            ? 'Requests count toward your Claude plan’s usage limits (shared with claude.ai). Everyday requests use the lighter model so your limits last longer.'
+            : 'Most requests go to the cheap fast model. The smart model is used only for hard requests (coding, analysis, self-modification) or when the fast model asks for help.'
+        }
       >
         <Field label="Routing">
           {select('routing', [
@@ -120,15 +112,26 @@ export function SettingsPage() {
             ['smart', 'Always use the smart model']
           ])}
         </Field>
-        <Field label="Fast model">{select('fastModel', MODELS)}</Field>
-        <Field label="Fast model effort" hint="Lower = cheaper and quicker">
+        {s.provider === 'subscription' ? (
+          <>
+            <Field label="Everyday model">{select('subFastModel', SUB_MODELS)}</Field>
+            <Field label="Model for hard requests">{select('subSmartModel', SUB_MODELS)}</Field>
+          </>
+        ) : (
+          <>
+            <Field label="Fast model">{select('fastModel', MODELS)}</Field>
+            <Field label="Smart model">{select('smartModel', MODELS)}</Field>
+          </>
+        )}
+        <Field label="Everyday effort" hint="Lower = quicker and uses less">
           {select('fastEffort', EFFORTS)}
         </Field>
-        <Field label="Smart model">{select('smartModel', MODELS)}</Field>
-        <Field label="Smart model effort">{select('smartEffort', EFFORTS)}</Field>
-        <Field label="Daily spending limit (USD)" hint="0 = no limit">
-          {num('dailyBudgetUsd', 0.25)}
-        </Field>
+        <Field label="Hard-request effort">{select('smartEffort', EFFORTS)}</Field>
+        {s.provider === 'api' && (
+          <Field label="Daily spending limit (USD)" hint="0 = no limit">
+            {num('dailyBudgetUsd', 0.25)}
+          </Field>
+        )}
         <Field label="Max steps per request" hint="Caps runaway computer-control loops">
           {num('maxToolStepsPerTurn', 1, 1)}
         </Field>
@@ -194,7 +197,7 @@ export function SettingsPage() {
         </Field>
         <Field label="Allow mouse & keyboard control">{bool('allowComputerControl')}</Field>
         <Field label="Allow shell commands">{bool('allowShell')}</Field>
-        <Field label="Allow web search" hint="Smart model only; $10 per 1,000 searches plus tokens">
+        <Field label="Allow web search" hint={s.provider === 'subscription' ? 'Uses Claude Code’s web search' : 'Smart model only; $10 per 1,000 searches plus tokens'}>
           {bool('allowWebSearch')}
         </Field>
         <Field label="Emergency stop hotkey">{text('stopHotkey')}</Field>
@@ -216,5 +219,115 @@ export function SettingsPage() {
         </Field>
       </Section>
     </div>
+  )
+}
+
+function Connection(p: {
+  settings: Settings
+  set: (patch: Partial<Settings>) => Promise<unknown>
+  hasKey: boolean
+  setHasKey: (v: boolean) => void
+  apiKey: string
+  setApiKey: (v: string) => void
+}) {
+  const s = p.settings
+  const [status, setStatus] = useState<ConnectionStatus | null>(null)
+  const [test, setTest] = useState<{ ok: boolean; detail: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+  const refresh = () => api.invoke<ConnectionStatus>('claude:status').then(setStatus)
+  useEffect(() => {
+    refresh()
+  }, [s.provider, s.claudePath])
+
+  const runTest = async () => {
+    setTesting(true)
+    setTest(null)
+    setTest(await api.invoke('claude:test'))
+    setTesting(false)
+  }
+
+  return (
+    <Section title="Connection" desc="Choose how JARVIS reaches Claude.">
+      <div className="provider-cards">
+        <button className={`provider ${s.provider === 'subscription' ? 'active' : ''}`} onClick={() => p.set({ provider: 'subscription' })}>
+          <b>My Claude subscription</b>
+          <span>Pro or Max plan · no API credits · uses your plan’s usage limits</span>
+        </button>
+        <button className={`provider ${s.provider === 'api' ? 'active' : ''}`} onClick={() => p.set({ provider: 'api' })}>
+          <b>Anthropic API key</b>
+          <span>Pay per use · separate from your subscription</span>
+        </button>
+      </div>
+
+      {s.provider === 'subscription' && (
+        <div className="steps">
+          <p className="muted small">
+            JARVIS runs through <b>Claude Code</b>, Anthropic’s official app that comes with your Pro plan. You sign in with Anthropic’s own login, and JARVIS never sees your
+            password or login token.
+          </p>
+          <div className={`step ${status?.claudeInstalled ? 'done' : ''}`}>
+            <span className="step-num">1</span>
+            <div className="grow">
+              <b>Install Claude Code</b>
+              <div className="muted small">
+                {status?.claudeInstalled ? `Found ${status.claudeVersion ?? ''} at ${status.claudePath}` : 'Opens a terminal running Anthropic’s official installer.'}
+              </div>
+            </div>
+            {!status?.claudeInstalled && (
+              <button className="btn primary" onClick={() => api.invoke('claude:install').then(() => toast('Follow the installer in the terminal, then click Re-check.'))}>
+                Install Claude Code
+              </button>
+            )}
+            <button className="btn ghost" onClick={refresh}>
+              Re-check
+            </button>
+          </div>
+          <div className="step">
+            <span className="step-num">2</span>
+            <div className="grow">
+              <b>Sign in with your Claude account</b>
+              <div className="muted small">
+                Opens Claude Code in a terminal. Choose “Claude account with subscription” and log in. When you see the prompt, you can close the terminal.
+              </div>
+            </div>
+            <button className="btn primary" disabled={!status?.claudeInstalled} onClick={() => api.invoke('claude:signin')}>
+              Sign in to Claude
+            </button>
+          </div>
+          <div className={`step ${test?.ok ? 'done' : ''}`}>
+            <span className="step-num">3</span>
+            <div className="grow">
+              <b>Test the connection</b>
+              <div className={`small ${test ? (test.ok ? 'ok-text' : 'err-text') : 'muted'}`}>{testing ? 'Testing…' : (test?.detail ?? 'Sends one tiny message.')}</div>
+            </div>
+            <button className="btn ghost" disabled={!status?.claudeInstalled || testing} onClick={runTest}>
+              Test
+            </button>
+          </div>
+          <Field label="Claude Code location" hint="Leave empty to find it automatically">
+            <input defaultValue={s.claudePath} placeholder="auto-detect" onBlur={(e) => p.set({ claudePath: e.target.value.trim() })} />
+          </Field>
+        </div>
+      )}
+
+      {s.provider === 'api' && (
+        <Field label="Anthropic API key" hint={p.hasKey ? 'A key is saved ✓' : 'Get one at console.anthropic.com'}>
+          <div className="row">
+            <input type="password" className="grow" placeholder={p.hasKey ? '•••••••• (saved)' : 'sk-ant-…'} value={p.apiKey} onChange={(e) => p.setApiKey(e.target.value)} />
+            <button
+              className="btn primary"
+              onClick={async () => {
+                await api.invoke('secret:set', 'anthropic', p.apiKey)
+                p.setHasKey(!!p.apiKey)
+                p.setApiKey('')
+                toast(p.apiKey ? 'API key saved' : 'API key removed')
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </Field>
+      )}
+    </Section>
   )
 }

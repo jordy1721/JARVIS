@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { MemoryFact } from '@shared/types'
+import type { JournalEntry, MemoryFact } from '@shared/types'
 import { api } from '../store'
 
 const CATS: MemoryFact['category'][] = ['identity', 'preference', 'work', 'routine', 'relationship', 'goal', 'skill', 'other']
@@ -11,7 +11,12 @@ export function Memory() {
   const [editing, setEditing] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
 
-  const load = () => api.invoke<MemoryFact[]>('memory:list').then(setFacts)
+  const [journal, setJournal] = useState<JournalEntry[]>([])
+  const [tab, setTab] = useState<'facts' | 'journal'>('facts')
+  const load = () => {
+    api.invoke<MemoryFact[]>('memory:list').then(setFacts)
+    api.invoke<JournalEntry[]>('journal:list').then(setJournal)
+  }
   useEffect(() => {
     load()
   }, [])
@@ -30,11 +35,64 @@ export function Memory() {
     <div className="page">
       <header className="page-head">
         <h2>Memory</h2>
-        <input className="search" placeholder="Search memories…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="row">
+          <div className="tabs">
+            <button className={tab === 'facts' ? 'active' : ''} onClick={() => setTab('facts')}>
+              About you ({facts.length})
+            </button>
+            <button className={tab === 'journal' ? 'active' : ''} onClick={() => setTab('journal')}>
+              Past conversations ({journal.length})
+            </button>
+          </div>
+          <input className="search" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
       </header>
       <p className="muted">
-        What JARVIS has learned about you. It's stored only on this computer, and only the most relevant facts are sent with each conversation. Edit or delete anything.
+        {tab === 'facts'
+          ? 'What JARVIS has learned about you. Stored only on this computer; only the most relevant facts are sent with each conversation. Edit or delete anything.'
+          : 'A diary of your conversations. Recent ones are remembered automatically; JARVIS searches older ones (and your full chat history) when you refer back to them. Your current conversation also carries over if you restart the app.'}
       </p>
+      {tab === 'journal' && (
+        <>
+          {journal.length === 0 && <p className="muted">Nothing yet. A summary is saved when a conversation ends (after 20 quiet minutes or “New conversation”).</p>}
+          <ul className="list journal">
+            {journal
+              .filter((j) => !q || (j.summary + j.topics.join(' ')).toLowerCase().includes(q.toLowerCase()))
+              .map((j) => (
+                <li key={j.id}>
+                  <span className="muted small when">
+                    {new Date(j.ts).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                  <div className="grow">
+                    <div>{j.summary}</div>
+                    <div>
+                      {j.topics.map((t) => (
+                        <span key={t} className="topic">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <button className="icon-btn" title="Delete" onClick={() => api.invoke('journal:remove', j.id).then(load)}>
+                    ✕
+                  </button>
+                </li>
+              ))}
+          </ul>
+          {journal.length > 0 && (
+            <button
+              className="btn danger ghost"
+              onClick={() => {
+                if (confirm('Delete all conversation summaries?')) api.invoke('journal:clear').then(load)
+              }}
+            >
+              Clear journal
+            </button>
+          )}
+        </>
+      )}
+      {tab === 'facts' && (
+        <>
       <div className="card form row wrap">
         <input className="grow" placeholder="Teach me something, e.g. “I prefer short answers”" value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && add()} />
         <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value as MemoryFact['category'] })}>
@@ -103,6 +161,8 @@ export function Memory() {
         >
           Forget everything
         </button>
+      )}
+        </>
       )}
     </div>
   )

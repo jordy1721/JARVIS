@@ -6,7 +6,8 @@ A desktop app (Windows, macOS, Linux) that gives Claude hands, eyes, ears and a 
 - **It talks back**: your system's built-in voices (free), or an optional ElevenLabs voice.
 - **It does things**: runs commands, launches apps, opens files and sites, reads and writes files, and sees and controls the screen (mouse and keyboard).
 - **It shows you how**: say "show me how to…" and it draws highlights, arrows and step cards **over your screen** instead of doing it for you.
-- **It learns about you**: it pulls lasting facts from your conversations (and, if you turn it on, from which apps you use) into a local memory you can view and edit.
+- **It remembers**: facts about you (preferences, people, routines, work), a diary of every past conversation it can search ("what did we talk about last week?"), and the current conversation even after you restart the app. Everything stays on your computer, and you can view and edit it on the Memory page.
+- **Runs on your Claude Pro/Max subscription**: no API key or credits needed. It works through Claude Code, Anthropic's official app included with your plan. You can switch to a pay-per-use API key instead if you prefer.
 - **A full app around it**: Dashboard, Assistant chat, Tasks (to-dos, reminders, scheduled automations), Memory, Activity Log (every action it took), Settings.
 - **It can change its own code**: ask for a new feature and it reads its source and proposes a diff. **Nothing changes until you approve it in Code Lab.** Each applied change is a git commit you can revert with one click.
 
@@ -20,7 +21,12 @@ npm install
 npm run dev
 ```
 
-1. Open **Settings**, paste your Anthropic API key (from [console.anthropic.com](https://console.anthropic.com)), and save. The key is encrypted with your OS keychain.
+1. Open **Settings → Connection** and keep **My Claude subscription** selected:
+   1. Click **Install Claude Code**. A terminal opens and runs Anthropic's official installer.
+   2. Click **Sign in to Claude**. A terminal opens Claude Code: pick *Claude account with subscription* and log in with your Pro account. When you see Claude Code's prompt, close the terminal.
+   3. Click **Test**.
+
+   (If you'd rather pay per use, pick **Anthropic API key** instead and paste a key from [console.anthropic.com](https://console.anthropic.com).)
 2. Press **Ctrl+Shift+Space** (⌘+Shift+Space on Mac), speak, then press it again. The first time, the speech model downloads (about 80 MB, one time only).
 3. Press **Ctrl+Shift+X** at any time to stop whatever JARVIS is doing.
 
@@ -34,7 +40,16 @@ To build an installer: `npm run dist:win`, `npm run dist:mac` or `npm run dist:l
 - **Windows**: no extra steps. To control apps running as administrator, JARVIS must also run as administrator.
 - **Linux**: X11 works best. Wayland may block screen capture and input control.
 
-## Keeping costs low
+## Using your Claude subscription (no credits)
+
+On the **subscription** route, JARVIS sends each request through your own copy of Claude Code (`claude -p`) running on your computer. You sign in to Claude Code with Anthropic's own login, so JARVIS never sees or stores your password or login token. JARVIS gives Claude Code its tools (tasks, memory, screen control and so on) through a small local connection that only works on your machine.
+
+- **Cost**: nothing extra. Requests count toward your plan's usage limits, which are shared with claude.ai. The dashboard shows your 5-hour and weekly usage.
+- **Usage limits**: everyday requests use **Haiku**, which uses the least of your plan. Hard requests (coding, analysis, changing its own code) use **Sonnet**. You can change both in Settings.
+- **Personal use**: Anthropic lets you sign in to Claude Code with your own subscription. Its terms don't let developers offer Claude.ai login in their own products, or route other people's requests through subscription plans. So keep this setup for yourself. Anyone else who uses JARVIS should sign in with their own account or use an API key.
+- **Speed**: each request starts Claude Code, which adds about a second compared to the API route.
+
+## Keeping costs low (API key route)
 
 JARVIS is built to cost cents per day, not dollars:
 
@@ -66,14 +81,17 @@ src/
     windows.ts             main window + transparent click-through overlay
     store.ts               local JSON storage, encrypted API keys
     brain/
-      agent.ts             agent loop: routing, streaming, tools, approvals, budget
+      agent.ts             agent loop (subscription + API engines), tools, approvals
+      claudeCli.ts         runs requests through your signed-in Claude Code (subscription)
+      toolServer.ts        local, token-protected endpoint that exposes JARVIS tools to Claude Code
       tools.ts             tool definitions + executors
       prompts.ts           system prompt (cache-stable) and routing heuristics
-      memory.ts            learning and retrieving facts about the user
+      memory.ts            facts about you, the conversation journal, recall
       pricing.ts           per-model prices and cost calculation
     computer/
       control.ts           screenshots + mouse/keyboard (Claude computer-use toolset)
       system.ts            shell, apps, files, clipboard
+    mcp-bridge.ts          tiny MCP server Claude Code launches to reach JARVIS tools
     selfmod/selfmod.ts     propose / apply / revert code changes via git
     services/              usage tracking, reminders/automations, activity sampling
   preload/                 secure bridge between the UI and the main process

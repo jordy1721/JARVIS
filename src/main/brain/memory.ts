@@ -2,8 +2,8 @@
 // from app-usage activity), stores them locally, and injects only the relevant ones into
 // each session so the prompt stays small and cheap.
 import type { MemoryFact } from '@shared/types'
-import { memory, getSettings, activity, kv } from '../store'
-import { cheapJson, hasApiKey } from './client'
+import { memory, getSettings, activity, kv, journal, chat } from '../store'
+import { cheapJson, isConfigured } from './client'
 import { recordUsage, dayKey } from '../services/usage'
 
 const STOP = new Set(
@@ -42,8 +42,13 @@ export function profileBlock(query: string): string {
   const facts = relevantFacts(query)
   for (const f of facts) memory.update(f.id, { uses: f.uses + 1 })
   const lines = facts.map((f) => `- [${f.id}] (${f.category}) ${f.text}`)
+  const recent = journal
+    .all()
+    .slice(-4)
+    .map((j) => `- ${new Date(j.ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}: ${j.summary}`)
   return [
     s.userName ? `The user's name is ${s.userName}.` : '',
+    recent.length ? `Your most recent conversations with the user (use recall_conversations to search older ones):\n${recent.join('\n')}` : '',
     lines.length ? `What you know about the user (memory ids in brackets):\n${lines.join('\n')}` : 'You do not know much about the user yet — learn as you go.'
   ]
     .filter(Boolean)
@@ -78,9 +83,11 @@ const EXTRACT_SCHEMA = {
         additionalProperties: false
       }
     },
-    obsolete_ids: { type: 'array', items: { type: 'string' } }
+    obsolete_ids: { type: 'array', items: { type: 'string' } },
+    conversation_summary: { type: 'string' },
+    topics: { type: 'array', items: { type: 'string' } }
   },
-  required: ['new_facts', 'updated_facts', 'obsolete_ids'],
+  required: ['new_facts', 'updated_facts', 'obsolete_ids', 'conversation_summary', 'topics'],
   additionalProperties: false
 }
 
@@ -88,15 +95,19 @@ interface Extracted {
   new_facts: { text: string; category: MemoryFact['category']; importance: number }[]
   updated_facts: { id: string; text: string }[]
   obsolete_ids: string[]
+  conversation_summary: string
+  topics: string[]
 }
 
 /**
  * Reflect on a finished stretch of conversation and update memory.
  * Runs on the fast model with low effort — typically a fraction of a cent.
  */
-export async function learnFromConversation(transcript: string, source: MemoryFact['source'] = 'conversation') {
+export async function learnFromConversation(transcript: string, source: MemoryFact['source'] = 'conversation', fullConversation?: string) {
   const s = getSettings()
-  if (!s.learnFromConversations || !hasApiKey() || transcript.trim().length < 40) return
+  if (transcript.trim().length < 40 || !(await isConfigured())) return
+  const journalIt = source === 'conversation' && !!fullConversation
+  if (!s.learnFromConversations && !journalIt) return
   const known = memory
     .all()
     .slice()
@@ -105,20 +116,60 @@ export async function learnFromConversation(transcript: string, source: MemoryFa
     .map((f) => `${f.id}: ${f.text}`)
     .join('\n')
   const system =
-    'You maintain a personal assistant\'s long-term memory about its user. Extract durable, useful facts about the USER ' +
+    "You maintain a personal assistant's long-term memory about its user. Extract durable, useful facts about the USER " +
     '(identity, preferences, work, routines, relationships, goals, skills). Ignore one-off requests, small talk, and anything about the assistant itself. ' +
     'Write each fact as a short third-person sentence ("Prefers dark mode", "Works as a video editor"). ' +
     'Do not repeat known facts; if new information changes a known fact, put it in updated_facts; if a known fact is now wrong, list its id in obsolete_ids. ' +
-    'Never store passwords, API keys, or financial account numbers. Return empty arrays if nothing is worth remembering.'
-  const user = `Known facts:\n${known || '(none)'}\n\nNew ${source === 'activity' ? 'activity summary' : 'conversation'}:\n${transcript.slice(-12000)}`
-  const { data, usage } = await cheapJson<Extracted>(s.fastModel, system, user, EXTRACT_SCHEMA)
-  recordUsage(s.fastModel, usage, 'memory')
-  for (const f of data.new_facts) {
-    if (f.text.trim()) memory.add({ text: f.text.trim(), category: f.category, importance: f.importance, source })
+    'Never store passwords, API keys, or financial account numbers. Return empty arrays if nothing is worth remembering. ' +
+    (journalIt
+      ? 'Also write conversation_summary: 1-3 sentences, past tense, describing what was discussed and done in the WHOLE conversation (for a diary the assistant can search later), and 1-5 short topics. '
+      : 'Set conversation_summary to "" and topics to []. ')
+  const body = journalIt ? `Whole conversation:\n${fullConversation!.slice(-14000)}` : `New ${source === 'activity' ? 'activity summary' : 'conversation'}:\n${transcript.slice(-12000)}`
+  const user = `Known facts:\n${known || '(none)'}\n\n${body}`
+  const { data, usage, model, subscription } = await cheapJson<Extracted>(system, user, EXTRACT_SCHEMA)
+  if (!subscription && usage) recordUsage(model, usage, 'memory')
+  if (s.learnFromConversations) {
+    for (const f of data.new_facts ?? []) {
+      if (f.text?.trim()) memory.add({ text: f.text.trim(), category: f.category, importance: f.importance, source })
+    }
+    for (const u of data.updated_facts ?? []) if (memory.all().some((f) => f.id === u.id)) memory.update(u.id, { text: u.text })
+    for (const id of data.obsolete_ids ?? []) memory.remove(id)
   }
-  for (const u of data.updated_facts) if (memory.all().some((f) => f.id === u.id)) memory.update(u.id, { text: u.text })
-  for (const id of data.obsolete_ids) memory.remove(id)
+  if (journalIt && data.conversation_summary?.trim()) {
+    journal.add({ ts: Date.now(), started: Date.now(), summary: data.conversation_summary.trim(), topics: data.topics ?? [] })
+  }
   return data
+}
+
+/** Search past conversations: the journal summaries first, then the raw chat log. */
+export function recallConversations(query: string, limit = 8): string {
+  const q = words(query)
+  if (!q.size) return 'Give me some keywords to search for.'
+  const score = (text: string) => {
+    const w = words(text)
+    let n = 0
+    for (const x of q) if (w.has(x)) n++
+    return n
+  }
+  const fmt = (ts: number) => new Date(ts).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const j = journal
+    .all()
+    .map((e) => ({ e, n: score(e.summary + ' ' + e.topics.join(' ')) }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n || b.e.ts - a.e.ts)
+    .slice(0, limit)
+    .map((x) => `[${fmt(x.e.ts)}] ${x.e.summary}`)
+  const c = chat
+    .all()
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => ({ m, n: score(m.text) }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n || b.m.ts - a.m.ts)
+    .slice(0, limit)
+    .sort((a, b) => a.m.ts - b.m.ts)
+    .map((x) => `[${fmt(x.m.ts)}] ${x.m.role === 'user' ? 'User' : 'You'}: ${x.m.text.slice(0, 300)}`)
+  if (!j.length && !c.length) return 'No past conversations match that.'
+  return [j.length ? `Conversation summaries:\n${j.join('\n')}` : '', c.length ? `Matching messages:\n${c.join('\n')}` : ''].filter(Boolean).join('\n\n')
 }
 
 /** Once a day, turn yesterday's app usage into a few memory facts (opt-in). */

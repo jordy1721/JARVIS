@@ -5,7 +5,14 @@ export type Autonomy = 'ask-always' | 'ask-risky' | 'autonomous'
 export type RoutingMode = 'auto' | 'fast' | 'smart'
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
+export type Provider = 'subscription' | 'api'
+
 export interface Settings {
+  // How JARVIS reaches Claude: the user's Claude plan via Claude Code, or a pay-per-use API key
+  provider: Provider
+  claudePath: string
+  subFastModel: string
+  subSmartModel: string
   userName: string
   assistantName: string
   // Models
@@ -47,6 +54,10 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  provider: 'subscription',
+  claudePath: '',
+  subFastModel: 'haiku',
+  subSmartModel: 'sonnet',
   userName: '',
   assistantName: 'JARVIS',
   fastModel: 'claude-haiku-5-5',
@@ -125,6 +136,29 @@ export interface Task {
   updated: number
 }
 
+export interface JournalEntry {
+  id: string
+  ts: number // when the conversation ended
+  started: number
+  summary: string
+  topics: string[]
+}
+
+export interface ConnectionStatus {
+  provider: Provider
+  ready: boolean
+  claudeInstalled: boolean
+  claudeVersion: string | null
+  claudePath: string | null
+  hasApiKey: boolean
+}
+
+export interface SubscriptionLimits {
+  status?: string
+  seenAt: number
+  unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number; status?: string }>
+}
+
 export interface UsageRecord {
   ts: number
   model: string
@@ -134,6 +168,7 @@ export interface UsageRecord {
   cacheWriteTokens: number
   costUsd: number
   purpose: 'chat' | 'memory' | 'automation' | 'summary'
+  subscription?: boolean
 }
 
 export interface UsageSummary {
@@ -144,6 +179,8 @@ export interface UsageSummary {
   byModel: { model: string; usd: number; requests: number }[]
   last14Days: { day: string; usd: number }[]
   cacheHitRate: number
+  subscriptionRequestsToday: number
+  subscriptionLimits: SubscriptionLimits | null
 }
 
 export interface ActionLogEntry {
@@ -214,9 +251,10 @@ export interface DashboardData {
   usage: UsageSummary
   tasks: { open: number; dueToday: number; done: number; upcoming: Task[] }
   memoryCount: number
+  journalCount: number
   recentActions: ActionLogEntry[]
   activity: ActivitySummary | null
   pendingChanges: number
-  hasApiKey: boolean
+  connection: ConnectionStatus
   computerControlAvailable: boolean
 }

@@ -1,8 +1,10 @@
 import { app, globalShortcut, ipcMain, Menu, nativeImage, session, systemPreferences, Tray } from 'electron'
-import type { ConfirmRequest, DashboardData, MemoryFact, Settings, Task } from '@shared/types'
+import type { ConfirmRequest, ConnectionStatus, DashboardData, MemoryFact, Settings, Task } from '@shared/types'
 import * as store from './store'
 import { Agent } from './brain/agent'
 import { hasApiKey, resetClient } from './brain/client'
+import { claudeVersion, findClaude, openInstaller, openSignIn, testConnection } from './brain/claudeCli'
+import { startToolServer } from './brain/toolServer'
 import { controlAvailable, loadNut } from './computer/control'
 import { applyChange, rejectChange, revertChange, sourceRoot } from './selfmod/selfmod'
 import { startActivityTracker, startScheduler } from './services/scheduler'
@@ -56,6 +58,20 @@ const agent = new Agent({
   },
   onTasksChanged: () => win.sendMain('tasks:changed')
 })
+
+async function connectionStatus(force = false): Promise<ConnectionStatus> {
+  const s = store.getSettings()
+  const claudePath = await findClaude(force)
+  const version = force && claudePath ? await claudeVersion() : null
+  return {
+    provider: s.provider,
+    ready: s.provider === 'subscription' ? !!claudePath : hasApiKey(),
+    claudeInstalled: !!claudePath,
+    claudeVersion: version,
+    claudePath,
+    hasApiKey: hasApiKey()
+  }
+}
 
 function broadcastSettings() {
   const s = store.getSettings()
@@ -118,6 +134,12 @@ function registerIpc() {
   })
   ipcMain.handle('secret:has', (_e, name: string) => (name === 'anthropic' ? hasApiKey() : !!store.getSecret(name)))
 
+  // Claude subscription connection (via the user's own Claude Code install)
+  ipcMain.handle('claude:status', () => connectionStatus(true))
+  ipcMain.handle('claude:test', () => testConnection())
+  ipcMain.handle('claude:signin', () => openSignIn())
+  ipcMain.handle('claude:install', () => openInstaller())
+
   ipcMain.handle('chat:send', (_e, text: string, spoken: boolean) => {
     agent.send(text, { spoken })
   })
@@ -142,6 +164,9 @@ function registerIpc() {
   ipcMain.handle('memory:update', (_e, id: string, patch: Partial<MemoryFact>) => store.memory.update(id, patch))
   ipcMain.handle('memory:remove', (_e, id: string) => store.memory.remove(id))
   ipcMain.handle('memory:clear', () => store.memory.set([]))
+  ipcMain.handle('journal:list', () => store.journal.all().slice().reverse())
+  ipcMain.handle('journal:remove', (_e, id: string) => store.journal.remove(id))
+  ipcMain.handle('journal:clear', () => store.journal.clear())
 
   ipcMain.handle('tasks:list', () => store.tasks.all())
   ipcMain.handle('tasks:add', (_e, t: Partial<Task> & { title: string }) => store.tasks.add(t))
@@ -166,7 +191,7 @@ function registerIpc() {
     app.exit(0)
   })
 
-  ipcMain.handle('dashboard:get', (): DashboardData => {
+  ipcMain.handle('dashboard:get', async (): Promise<DashboardData> => {
     const all = store.tasks.all()
     const endOfDay = new Date()
     endOfDay.setHours(23, 59, 59, 999)
@@ -183,6 +208,7 @@ function registerIpc() {
           .slice(0, 6)
       },
       memoryCount: store.memory.all().length,
+      journalCount: store.journal.all().length,
       recentActions: store.actions.all().slice(-8).reverse(),
       activity: today
         ? {
@@ -194,7 +220,7 @@ function registerIpc() {
           }
         : null,
       pendingChanges: store.codeChanges.all().filter((c) => c.status === 'pending').length,
-      hasApiKey: hasApiKey(),
+      connection: await connectionStatus(),
       computerControlAvailable: controlAvailable()
     }
   })
@@ -236,6 +262,8 @@ app.whenReady().then(async () => {
     systemPreferences.askForMediaAccess('microphone').catch(() => undefined)
   }
   registerIpc()
+  await startToolServer((name, input, isComputer) => agent.executeTool(name, input, isComputer))
+  findClaude().catch(() => undefined)
   win.createMainWindow()
   win.createOverlayWindow()
   win.setHud({ visible: store.getSettings().showHud })

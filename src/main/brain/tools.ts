@@ -2,6 +2,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import type { GuideStep, Settings, Task } from '@shared/types'
 import { memory, tasks, updateSettings } from '../store'
+import { recallConversations } from './memory'
 import * as sys from '../computer/system'
 import { listSourceFiles, proposeChange, readSourceFile } from '../selfmod/selfmod'
 import { supportsWebSearch } from './pricing'
@@ -108,6 +109,13 @@ export const CUSTOM_TOOLS: CustomTool[] = [
     name: 'search_memory',
     description: 'Search everything you remember about the user.',
     input_schema: { type: 'object', properties: { query: str('Keywords') }, required: ['query'] },
+    risk: 'none'
+  },
+  {
+    name: 'recall_conversations',
+    description:
+      'Search your memory of past conversations with the user (summaries of earlier conversations and the message history). Use when the user refers to something discussed before ("like we talked about", "what did I say about…", "last week").',
+    input_schema: { type: 'object', properties: { query: str('Keywords to search for') }, required: ['query'] },
     risk: 'none'
   },
   {
@@ -383,6 +391,8 @@ export async function runCustomTool(name: string, input: Record<string, any>, ho
       const hits = memory.all().filter((f) => q.some((w) => f.text.toLowerCase().includes(w)))
       return hits.length ? hits.map((f) => `[${f.id}] ${f.text}`).join('\n') : 'Nothing found'
     }
+    case 'recall_conversations':
+      return recallConversations(String(input.query))
     case 'create_task': {
       const t = tasks.add({
         title: input.title,

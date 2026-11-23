@@ -1,5 +1,6 @@
-import type { UsageRecord, UsageSummary } from '@shared/types'
-import { usage, getSettings } from '../store'
+import type { SubscriptionLimits, UsageRecord, UsageSummary } from '@shared/types'
+import { usage, getSettings, kv } from '../store'
+import type { ClaudeResult } from '../brain/claudeCli'
 import { costOf, type UsageLike } from '../brain/pricing'
 
 export const dayKey = (ts: number) => {
@@ -22,6 +23,29 @@ export function recordUsage(model: string, u: UsageLike, purpose: UsageRecord['p
   return cost
 }
 
+/** Subscription usage is covered by the user's Claude plan: record tokens for insight, cost $0. */
+export function recordSubscriptionUsage(r: ClaudeResult, purpose: UsageRecord['purpose']): void {
+  const models = r.modelUsage ?? {}
+  const entries = Object.entries(models)
+  if (!entries.length && r.usage) entries.push(['claude', {
+    inputTokens: r.usage.input_tokens ?? 0, outputTokens: r.usage.output_tokens ?? 0,
+    cacheReadInputTokens: r.usage.cache_read_input_tokens ?? 0, cacheCreationInputTokens: r.usage.cache_creation_input_tokens ?? 0
+  }])
+  for (const [model, m] of entries) {
+    usage.add({
+      ts: Date.now(),
+      model,
+      inputTokens: m.inputTokens ?? 0,
+      outputTokens: m.outputTokens ?? 0,
+      cacheReadTokens: m.cacheReadInputTokens ?? 0,
+      cacheWriteTokens: m.cacheCreationInputTokens ?? 0,
+      costUsd: 0,
+      purpose,
+      subscription: true
+    })
+  }
+}
+
 export function spentToday(): number {
   const today = dayKey(Date.now())
   return usage
@@ -31,7 +55,8 @@ export function spentToday(): number {
 }
 
 export function overBudget(): boolean {
-  const { dailyBudgetUsd } = getSettings()
+  const { dailyBudgetUsd, provider } = getSettings()
+  if (provider === 'subscription') return false
   return dailyBudgetUsd > 0 && spentToday() >= dailyBudgetUsd
 }
 
@@ -45,6 +70,7 @@ export function usageSummary(): UsageSummary {
   let monthUsd = 0
   let totalUsd = 0
   let todayRequests = 0
+  let subscriptionRequestsToday = 0
   let cacheRead = 0
   let promptTokens = 0
   for (const r of all) {
@@ -53,12 +79,14 @@ export function usageSummary(): UsageSummary {
     if (d === today) {
       todayUsd += r.costUsd
       todayRequests++
+      if (r.subscription) subscriptionRequestsToday++
     }
     if (d.startsWith(monthPrefix)) monthUsd += r.costUsd
-    const m = byModel.get(r.model) ?? { usd: 0, requests: 0 }
+    const key = r.subscription ? `${r.model} (plan)` : r.model
+    const m = byModel.get(key) ?? { usd: 0, requests: 0 }
     m.usd += r.costUsd
     m.requests++
-    byModel.set(r.model, m)
+    byModel.set(key, m)
     cacheRead += r.cacheReadTokens
     promptTokens += r.inputTokens + r.cacheReadTokens + r.cacheWriteTokens
   }
@@ -74,6 +102,8 @@ export function usageSummary(): UsageSummary {
     todayRequests,
     byModel: [...byModel.entries()].map(([model, v]) => ({ model, ...v })).sort((a, b) => b.usd - a.usd),
     last14Days,
-    cacheHitRate: promptTokens ? cacheRead / promptTokens : 0
+    cacheHitRate: promptTokens ? cacheRead / promptTokens : 0,
+    subscriptionRequestsToday,
+    subscriptionLimits: kv.get<SubscriptionLimits | null>('subscriptionLimits', null)
   }
 }

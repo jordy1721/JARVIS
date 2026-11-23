@@ -9,6 +9,7 @@ import {
   type ActionLogEntry,
   type ChatEntry,
   type CodeChange,
+  type JournalEntry,
   type MemoryFact,
   type Settings,
   type Task,
@@ -138,6 +139,24 @@ export const memory = {
   remove(id: string): void {
     memoryCol.set(memoryCol.get().filter((f) => f.id !== id))
   }
+}
+
+// ---------- Conversation journal (episodic memory) ----------
+const journalCol = collection<JournalEntry[]>('journal.json', [])
+export const journal = {
+  all: () => journalCol.get(),
+  add(e: Omit<JournalEntry, 'id'>): JournalEntry {
+    const entry = { ...e, id: newId() }
+    const list = journalCol.get()
+    list.push(entry)
+    if (list.length > 2000) list.splice(0, list.length - 2000)
+    journalCol.set(list)
+    return entry
+  },
+  remove(id: string): void {
+    journalCol.set(journalCol.get().filter((e) => e.id !== id))
+  },
+  clear: () => journalCol.set([])
 }
 
 // ---------- Tasks ----------

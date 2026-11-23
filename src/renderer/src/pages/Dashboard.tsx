@@ -86,6 +86,11 @@ export function Dashboard() {
   }, [chatLen])
 
   if (!d || !settings) return <div className="page" />
+  const sub = d.connection.provider === 'subscription'
+  const win = d.usage.subscriptionLimits?.unifiedWindows ?? {}
+  const five = win.five_hour
+  const week = win.seven_day
+  const pct = (u?: number) => (u === undefined ? '—' : `${Math.round(u * 100)}%`)
   const budgetPct = settings.dailyBudgetUsd > 0 ? Math.min(100, (d.usage.todayUsd / settings.dailyBudgetUsd) * 100) : 0
 
   return (
@@ -102,9 +107,11 @@ export function Dashboard() {
         </div>
       </section>
 
-      {!d.hasApiKey && (
+      {!d.connection.ready && (
         <div className="alert" onClick={() => setState({ page: 'settings' })}>
-          Add your Anthropic API key in Settings to bring {settings.assistantName} online →
+          {d.connection.provider === 'subscription'
+            ? `Connect your Claude subscription in Settings to bring ${settings.assistantName} online →`
+            : `Add your Anthropic API key in Settings to bring ${settings.assistantName} online →`}
         </div>
       )}
       {!d.computerControlAvailable && (
@@ -117,21 +124,47 @@ export function Dashboard() {
       )}
 
       <section className="tiles">
-        <div className="tile">
-          <div className="tile-label">Spent today</div>
-          <div className="tile-value">{usd(d.usage.todayUsd)}</div>
-          <div className="meter" aria-label="Daily budget used">
-            <div style={{ width: `${budgetPct}%` }} className={budgetPct > 85 ? 'warn' : ''} />
-          </div>
-          <div className="tile-sub">
-            of {usd(settings.dailyBudgetUsd)} daily limit · {d.usage.todayRequests} requests
-          </div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">This month</div>
-          <div className="tile-value">{usd(d.usage.monthUsd)}</div>
-          <div className="tile-sub">Prompt cache hit rate {(d.usage.cacheHitRate * 100).toFixed(0)}%</div>
-        </div>
+        {sub ? (
+          <>
+            <div className="tile">
+              <div className="tile-label">Claude plan · 5-hour window</div>
+              <div className="tile-value">{pct(five?.utilization)}</div>
+              <div className="meter" aria-label="5-hour plan usage">
+                <div style={{ width: `${Math.min(100, (five?.utilization ?? 0) * 100)}%` }} className={(five?.utilization ?? 0) > 0.85 ? 'warn' : ''} />
+              </div>
+              <div className="tile-sub">
+                {five?.resetsAt ? `Resets ${new Date(five.resetsAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Shows after your first request'} ·{' '}
+                {d.usage.subscriptionRequestsToday} requests today
+              </div>
+            </div>
+            <div className="tile">
+              <div className="tile-label">Claude plan · this week</div>
+              <div className="tile-value">{pct(week?.utilization)}</div>
+              <div className="meter" aria-label="Weekly plan usage">
+                <div style={{ width: `${Math.min(100, (week?.utilization ?? 0) * 100)}%` }} className={(week?.utilization ?? 0) > 0.85 ? 'warn' : ''} />
+              </div>
+              <div className="tile-sub">No API credits used — included in your subscription</div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="tile">
+              <div className="tile-label">Spent today</div>
+              <div className="tile-value">{usd(d.usage.todayUsd)}</div>
+              <div className="meter" aria-label="Daily budget used">
+                <div style={{ width: `${budgetPct}%` }} className={budgetPct > 85 ? 'warn' : ''} />
+              </div>
+              <div className="tile-sub">
+                of {usd(settings.dailyBudgetUsd)} daily limit · {d.usage.todayRequests} requests
+              </div>
+            </div>
+            <div className="tile">
+              <div className="tile-label">This month</div>
+              <div className="tile-value">{usd(d.usage.monthUsd)}</div>
+              <div className="tile-sub">Prompt cache hit rate {(d.usage.cacheHitRate * 100).toFixed(0)}%</div>
+            </div>
+          </>
+        )}
         <div className="tile clickable" onClick={() => setState({ page: 'tasks' })}>
           <div className="tile-label">Open tasks</div>
           <div className="tile-value">{d.tasks.open}</div>
@@ -140,20 +173,27 @@ export function Dashboard() {
         <div className="tile clickable" onClick={() => setState({ page: 'memory' })}>
           <div className="tile-label">Things I know about you</div>
           <div className="tile-value">{d.memoryCount}</div>
-          <div className="tile-sub">{settings.learnFromConversations ? 'Learning from conversations' : 'Learning paused'}</div>
+          <div className="tile-sub">
+            {d.journalCount} past conversation{d.journalCount === 1 ? '' : 's'} remembered
+            {settings.learnFromConversations ? '' : ' · learning paused'}
+          </div>
         </div>
       </section>
 
       <section className="grid2">
         <div className="card">
-          <h3>Daily spend · last 14 days</h3>
-          <SpendChart days={d.usage.last14Days} />
+          <h3>{sub ? 'Usage by model' : 'Daily spend · last 14 days'}</h3>
+          {sub ? (
+            <p className="muted">Running on your Claude subscription, so there’s no API spend. Requests count toward your plan’s limits, shown above.</p>
+          ) : (
+            <SpendChart days={d.usage.last14Days} />
+          )}
           <div className="model-split">
             {d.usage.byModel.map((m) => (
               <div key={m.model}>
                 <span>{m.model}</span>
                 <span className="muted">
-                  {m.requests} req · {usd(m.usd)}
+                  {m.requests} req{m.model.endsWith('(plan)') ? '' : ` · ${usd(m.usd)}`}
                 </span>
               </div>
             ))}
