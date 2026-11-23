@@ -15,6 +15,16 @@ A desktop app (Windows, macOS, Linux) that gives Claude hands, eyes, ears and a 
 
 ### Windows (easiest)
 
+Open **PowerShell** (normal, not as administrator) and paste:
+
+```powershell
+irm https://raw.githubusercontent.com/jordy1721/JARVIS/claude/practical-cerf-mwk3di/install-jarvis.ps1 | iex
+```
+
+This installs Node.js if needed, downloads JARVIS to `%USERPROFILE%\JARVIS` (keeping a backup of any older copy), installs it, adds a desktop shortcut and starts it. Run the same line again any time to update.
+
+**Or manually:**
+
 1. Install **Node.js LTS** from [nodejs.org](https://nodejs.org).
 2. Get JARVIS: either install [Git for Windows](https://git-scm.com/download/win) and clone this repo, or download it as a ZIP from GitHub (green **Code** button → **Download ZIP**) and extract it, e.g. to `Documents\JARVIS`.
 3. Open that folder and double-click **`start-jarvis.bat`**. The first run installs everything, which takes a few minutes. After that it just starts JARVIS.
