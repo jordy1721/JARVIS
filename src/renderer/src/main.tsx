@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import type { ChatEntry, ConfirmRequest, ConnectionStatus, Settings, Task } from '@shared/types'
 import { App } from './App'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { api, getState, setState, toast, type Page } from './store'
 import { voice } from './voice/instance'
 import { configureTts, SentenceChunker, speak, stopSpeaking } from './voice/tts'
@@ -61,4 +62,11 @@ Promise.all([api.invoke<Settings>('settings:get'), api.invoke<ChatEntry[]>('chat
 // Voices load asynchronously in Chromium
 window.speechSynthesis?.addEventListener?.('voiceschanged', () => setState({}))
 
-createRoot(document.getElementById('root')!).render(<App />)
+window.addEventListener('error', (e) => api.send('renderer:error', String(e.message)))
+window.addEventListener('unhandledrejection', (e) => api.send('renderer:error', String(e.reason)))
+
+createRoot(document.getElementById('root')!).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+)

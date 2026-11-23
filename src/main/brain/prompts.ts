@@ -37,7 +37,7 @@ ${
 
 # Self-modification
 - You can read your own source code (list_source_files, read_source_file) and propose changes (propose_code_change) when the user asks you to change your own behaviour, features, or appearance.
-- Always read the relevant files first, keep edits minimal and consistent with the existing code (Electron + React + TypeScript), and explain the change. Changes are only applied after the user approves them in Code Lab, so never claim a change is live until they approve it. Mention that the app restarts to load changes to the main process.
+- Always read the relevant files first, keep edits minimal and consistent with the existing code (Electron + React + TypeScript), and explain the change. Changes are only applied after the user approves them in Code Lab, so never claim a change is live until they approve it. Approved changes are type-checked and undone automatically if they have errors, but a change can still break the app at runtime — so be careful with React components and keep every edit small, valid TypeScript. Mention that the app reloads to pick up changes.
 
 # Cost awareness
 - The user wants low running costs. Be economical: avoid unnecessary screenshots, tool calls, and long replies.`

@@ -3,13 +3,13 @@
 A desktop app (Windows, macOS, Linux) that gives Claude hands, eyes, ears and a voice on your computer:
 
 - **Talk to it**: push-to-talk hotkey or open mic with a wake word ("Jarvis, …"). Speech recognition runs **locally** (Whisper), so it's free and private.
-- **It talks back**: your system's built-in voices (free), or an optional ElevenLabs voice.
+- **It talks back** in a high-quality **neural voice** (Kokoro, British "George" by default), generated on your own computer: free and offline after a one-time ~90 MB download. Windows/macOS system voices and ElevenLabs are optional alternatives.
 - **It does things**: runs commands, launches apps, opens files and sites, reads and writes files, and sees and controls the screen (mouse and keyboard).
 - **It shows you how**: say "show me how to…" and it draws highlights, arrows and step cards **over your screen** instead of doing it for you.
 - **It remembers**: facts about you (preferences, people, routines, work), a diary of every past conversation it can search ("what did we talk about last week?"), and the current conversation even after you restart the app. Everything stays on your computer, and you can view and edit it on the Memory page.
 - **Runs on your Claude Pro/Max subscription**: no API key or credits needed. It works through Claude Code, Anthropic's official app included with your plan. You can switch to a pay-per-use API key instead if you prefer.
 - **A full app around it**: Dashboard, Assistant chat, Tasks (to-dos, reminders, scheduled automations), Memory, Activity Log (every action it took), Settings.
-- **It can change its own code**: ask for a new feature and it reads its source and proposes a diff. **Nothing changes until you approve it in Code Lab.** Each applied change is a git commit you can revert with one click.
+- **It can change its own code**: ask for a new feature and it reads its source and proposes a diff. **Nothing changes until you approve it in Code Lab.** Approved changes are checked for errors and undone automatically if they fail. Every change keeps a backup and can be undone, even without git. If a change ever leaves the screen blank, JARVIS notices and offers to undo it.
 
 ## Quick start
 
@@ -73,6 +73,19 @@ JARVIS is built to cost cents per day, not dollars:
 | **Hard limits** | A daily spending cap (default **$1**) and a cap on steps per request. The dashboard shows spend per day and per model, plus the cache hit rate. |
 
 As a rough guide, a typical spoken command on Haiku costs around **$0.0005**, and one that takes a few screenshots around $0.002–0.005.
+
+## Voice troubleshooting
+
+Open **Settings → Voice**. The **Voice check** panel shows whether speech recognition and the voice are ready:
+- **Test microphone** records 4 seconds and shows what JARVIS heard.
+- **Test voice** speaks a sample.
+
+The sidebar has a quick switch between *Push to talk*, *Always listening* (say "Jarvis, …") and *Voice off*. Close mishearings of the wake word, such as "Java's" or "Jervis", still work.
+
+## If something breaks
+
+- **Screen stays blank after a code change**: JARVIS detects this within about 20 seconds and offers to **undo the change**. You can also right-click the tray icon and choose **Undo last code change**.
+- **Code Lab** lists every change with an **Undo** button.
 
 ## Safety
 

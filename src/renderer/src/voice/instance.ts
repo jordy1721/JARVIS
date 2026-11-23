@@ -1,5 +1,6 @@
 import { VoiceController } from './controller'
-import { api, setState } from '../store'
+import { api, getState, setState } from '../store'
+import { onSpeakingChange } from './tts'
 
 export const voice = new VoiceController({
   onState: (s, caption) => setState({ state: s, caption: caption ?? '' }),
@@ -8,6 +9,7 @@ export const voice = new VoiceController({
     api.invoke('chat:send', text, true)
   },
   onModelProgress: (t) => setState({ modelProgress: t }),
+  onSttStatus: (state, detail) => setState({ sttStatus: { state, detail } }),
   onLevel: (() => {
     let last = 0
     return (level: number) => {
@@ -20,3 +22,10 @@ export const voice = new VoiceController({
   })()
 })
 
+
+// Show "Speaking" in the app while JARVIS talks.
+onSpeakingChange((speaking) => {
+  const st = getState().state
+  if (speaking) setState({ state: 'speaking' })
+  else if (st === 'speaking') setState({ state: 'idle' })
+})

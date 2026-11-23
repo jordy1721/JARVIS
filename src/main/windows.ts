@@ -49,6 +49,7 @@ export function createMainWindow(): BrowserWindow {
     shell.openExternal(url)
     return { action: 'deny' }
   })
+  armWatchdog(mainWin)
   loadPage(mainWin, 'index')
   return mainWin
 }
@@ -80,6 +81,47 @@ export function createOverlayWindow(): BrowserWindow {
   })
   loadPage(overlayWin, 'overlay')
   return overlayWin
+}
+
+// ---------------- blank-screen watchdog ----------------
+// The UI reports "ready" after it renders. If that doesn't happen (e.g. a bad code change
+// broke it), the main process notices and offers to undo the change.
+let rendererReady = false
+let watchdog: NodeJS.Timeout | undefined
+const recentErrors: string[] = []
+let onStuck: ((errors: string[]) => void) | null = null
+
+export function setRendererStuckHandler(fn: (errors: string[]) => void): void {
+  onStuck = fn
+}
+export function markRendererReady(): void {
+  rendererReady = true
+  clearTimeout(watchdog)
+}
+export function noteRendererError(msg: string): void {
+  recentErrors.push(msg.slice(0, 500))
+  if (recentErrors.length > 8) recentErrors.shift()
+}
+
+function armWatchdog(win: BrowserWindow) {
+  win.webContents.on('did-start-loading', () => {
+    rendererReady = false
+    recentErrors.length = 0
+  })
+  win.webContents.on('did-finish-load', () => {
+    clearTimeout(watchdog)
+    watchdog = setTimeout(() => {
+      if (!rendererReady) onStuck?.([...recentErrors])
+    }, 20_000)
+  })
+  win.webContents.on('console-message', (e) => {
+    const ev = e as unknown as { level?: string | number; message?: string }
+    if (ev.level === 'error' || ev.level === 3) noteRendererError(String(ev.message ?? ''))
+  })
+  win.webContents.on('render-process-gone', (_e, details) => {
+    noteRendererError(`Renderer crashed: ${details.reason}`)
+    onStuck?.([...recentErrors])
+  })
 }
 
 export const getMainWindow = () => mainWin

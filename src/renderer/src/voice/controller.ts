@@ -1,6 +1,7 @@
 import type { AssistantState, Settings } from '@shared/types'
 import { Recorder } from './recorder'
 import { onSpeakingChange, stopSpeaking } from './tts'
+import { stripWakeWord } from './wake'
 
 const NOISE = /^(\[.*\]|\(.*\)|thank you\.?|thanks for watching!?|you|bye\.?|\.+)$/i
 
@@ -8,6 +9,7 @@ export interface VoiceCallbacks {
   onState(state: AssistantState, caption?: string): void
   onTranscript(text: string): void
   onModelProgress(text: string | null): void
+  onSttStatus(state: 'loading' | 'ready' | 'error', detail: string): void
   onLevel(level: number): void
 }
 
@@ -27,14 +29,21 @@ export class VoiceController {
     this.worker.onmessage = (e) => {
       const m = e.data
       if (m.type === 'progress') {
-        if (m.status === 'progress' && m.progress !== undefined)
-          cb.onModelProgress(`Downloading speech model… ${Math.round(m.progress)}% (one-time)`)
+        if (m.status === 'progress' && m.progress !== undefined) {
+          const t = `Downloading speech recognition… ${Math.round(m.progress)}% (one-time)`
+          cb.onModelProgress(m.progress >= 100 ? null : t)
+          cb.onSttStatus('loading', t)
+        }
       } else if (m.type === 'ready') {
         this.modelReady = true
         cb.onModelProgress(null)
+        cb.onSttStatus('ready', `Ready (running on your ${m.device === 'webgpu' ? 'graphics card' : 'processor'})`)
       } else if (m.type === 'result' || m.type === 'error') {
-        if (m.type === 'error') console.error('[stt]', m.error)
-        this.modelReady = true
+        if (m.type === 'error') {
+          console.error('[stt]', m.error)
+          cb.onSttStatus('error', `Speech recognition failed: ${m.error}`)
+        } else if (!this.modelReady) cb.onSttStatus('ready', 'Ready')
+        this.modelReady = m.type === 'result'
         cb.onModelProgress(null)
         this.pending.get(m.id)?.(m.type === 'result' ? m.text : '')
         this.pending.delete(m.id)
@@ -58,7 +67,9 @@ export class VoiceController {
   async apply(s: Settings) {
     const prev = this.settings
     this.settings = s
-    if (!this.modelReady && s.voiceMode !== 'off' && prev?.sttModel !== s.sttModel) {
+    if (s.voiceMode !== 'off' && (prev?.sttModel !== s.sttModel || !prev)) {
+      this.modelReady = false
+      this.cb.onSttStatus('loading', 'Preparing speech recognition…')
       this.worker.postMessage({ type: 'load', model: s.sttModel })
     }
     if (s.voiceMode === 'open-mic') {
@@ -109,6 +120,23 @@ export class VoiceController {
     }
   }
 
+  /** Settings → Voice check: record a few seconds and return what was heard. */
+  async testMicrophone(seconds = 4): Promise<string> {
+    await this.recorder.open()
+    const wasVad = this.settings?.voiceMode === 'open-mic'
+    this.recorder.startManual()
+    await new Promise((r) => setTimeout(r, seconds * 1000))
+    const audio = this.recorder.stopManual()
+    if (wasVad) this.recorder.startVad()
+    else if (this.settings?.voiceMode !== 'open-mic') this.recorder.close()
+    let peak = 0
+    for (let i = 0; i < audio.length; i++) peak = Math.max(peak, Math.abs(audio[i]))
+    if (audio.length === 0) return '(no audio received — check that a microphone is connected and allowed)'
+    if (peak < 0.01) return '(only silence — the microphone may be muted or the wrong one is selected in Windows sound settings)'
+    const text = await this.transcribe(audio, true)
+    return text || '(heard sound but no words — try speaking louder or closer)'
+  }
+
   cancel() {
     if (this.pttActive) {
       this.pttActive = false
@@ -123,22 +151,18 @@ export class VoiceController {
     const text = await this.transcribe(audio, true)
     if (!text) return
     if (s.requireWakeWord && Date.now() > this.followUpUntil) {
-      const wake = s.wakeWord.toLowerCase().trim()
-      const lower = text.toLowerCase()
-      const idx = lower.search(new RegExp(`\\b(hey |ok |okay )?${wake.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b[,.!?]?`))
-      if (idx === -1) {
+      const rest = stripWakeWord(text, s.wakeWord)
+      if (rest === null) {
         window.jarvis.send('voice:state', 'idle')
         return
       }
-      const after = text.slice(idx).replace(new RegExp(`^(hey |ok |okay )?${wake}[,.!?]?\\s*`, 'i'), '')
-      if (!after.trim()) {
-        stopSpeaking()
+      stopSpeaking()
+      if (!rest) {
         this.followUpUntil = Date.now() + 8000
         window.jarvis.send('voice:state', 'listening', 'Yes?')
         return
       }
-      stopSpeaking()
-      this.cb.onTranscript(after.trim())
+      this.cb.onTranscript(rest)
       return
     }
     this.cb.onTranscript(text)

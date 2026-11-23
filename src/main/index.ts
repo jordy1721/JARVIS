@@ -1,4 +1,4 @@
-import { app, globalShortcut, ipcMain, Menu, nativeImage, session, systemPreferences, Tray } from 'electron'
+import { app, dialog, globalShortcut, ipcMain, Menu, nativeImage, session, systemPreferences, Tray } from 'electron'
 import type { ConfirmRequest, ConnectionStatus, DashboardData, MemoryFact, Settings, Task } from '@shared/types'
 import * as store from './store'
 import { Agent } from './brain/agent'
@@ -6,7 +6,7 @@ import { hasApiKey, resetClient } from './brain/client'
 import { claudeVersion, findClaude, openInstaller, openSignIn, testConnection } from './brain/claudeCli'
 import { startToolServer } from './brain/toolServer'
 import { controlAvailable, loadNut } from './computer/control'
-import { applyChange, rejectChange, revertChange, sourceRoot } from './selfmod/selfmod'
+import { applyChange, canRevert, lastRevertible, rejectChange, revertChange, sourceRoot } from './selfmod/selfmod'
 import { startActivityTracker, startScheduler } from './services/scheduler'
 import { dayKey, usageSummary } from './services/usage'
 import * as win from './windows'
@@ -99,6 +99,52 @@ function registerHotkeys() {
   })
 }
 
+// ---------------- Recovery from a broken self-modification ----------------
+async function undoLastChange(): Promise<string> {
+  const c = lastRevertible()
+  if (!c) return 'There is no applied code change that can be undone.'
+  await revertChange(c.id)
+  win.sendMain('code:changed')
+  setTimeout(() => win.getMainWindow()?.webContents.reload(), 1500)
+  return `Undid "${c.title}".`
+}
+
+let recoveryOpen = false
+async function offerRecovery(errors: string[]) {
+  if (recoveryOpen) return
+  recoveryOpen = true
+  const main = win.getMainWindow()
+  const c = lastRevertible()
+  const detail = errors.length ? `Errors:\n${errors.slice(-4).join('\n')}` : 'The screen did not finish loading.'
+  try {
+    if (c) {
+      const { response } = await dialog.showMessageBox(main!, {
+        type: 'warning',
+        title: 'JARVIS needs repair',
+        message: `JARVIS's screen didn't load. This is most likely caused by the last code change: "${c.title}". Undo it?`,
+        detail,
+        buttons: ['Undo the change', 'Reload', 'Leave it'],
+        defaultId: 0,
+        cancelId: 2
+      })
+      if (response === 0) await undoLastChange()
+      else if (response === 1) main?.webContents.reload()
+    } else {
+      const { response } = await dialog.showMessageBox(main!, {
+        type: 'warning',
+        title: 'JARVIS',
+        message: "JARVIS's screen didn't load.",
+        detail,
+        buttons: ['Reload', 'Close'],
+        defaultId: 0
+      })
+      if (response === 0) main?.webContents.reload()
+    }
+  } finally {
+    recoveryOpen = false
+  }
+}
+
 // ---------------- Tray ----------------
 function createTray() {
   // 16x16 cyan ring drawn as a data URL so no binary asset is needed.
@@ -111,6 +157,7 @@ function createTray() {
       { label: 'Open JARVIS', click: () => win.showMain() },
       { label: 'Talk (push-to-talk)', click: () => win.sendMain('ptt:toggle') },
       { label: 'Stop current action', click: () => agent.stop() },
+      { label: 'Undo last code change', click: () => undoLastChange().then((m) => dialog.showMessageBox({ message: m })) },
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() }
     ])
@@ -181,7 +228,11 @@ function registerIpc() {
   ipcMain.handle('usage:summary', () => usageSummary())
 
   ipcMain.handle('code:list', () => store.codeChanges.all().slice().reverse())
-  ipcMain.handle('code:apply', (_e, id: string) => applyChange(id))
+  ipcMain.handle('code:apply', (_e, id: string) => applyChange(id, (msg) => win.setHud({ caption: msg })))
+  ipcMain.handle('code:canRevert', (_e, id: string) => canRevert(id))
+  ipcMain.handle('code:undoLast', () => undoLastChange())
+  ipcMain.on('renderer:ready', () => win.markRendererReady())
+  ipcMain.on('renderer:error', (_e, msg: string) => win.noteRendererError(msg))
   ipcMain.handle('code:reject', (_e, id: string) => rejectChange(id))
   ipcMain.handle('code:revert', (_e, id: string) => revertChange(id))
   ipcMain.handle('code:root', () => sourceRoot())
@@ -264,6 +315,7 @@ app.whenReady().then(async () => {
   registerIpc()
   await startToolServer((name, input, isComputer) => agent.executeTool(name, input, isComputer))
   findClaude().catch(() => undefined)
+  win.setRendererStuckHandler((errors) => void offerRecovery(errors))
   win.createMainWindow()
   win.createOverlayWindow()
   win.setHud({ visible: store.getSettings().showHud })

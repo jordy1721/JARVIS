@@ -159,7 +159,7 @@ export class Agent {
     this.abort = new AbortController()
     this.busy = true
     this.turnCtx = { text, computerGranted: settings.autonomy === 'autonomous', computerFailed: false, signal: this.abort.signal }
-    const speak = settings.ttsEnabled && (!!opts.spoken || opts.purpose === 'automation')
+    const speak = settings.ttsEnabled && (!!opts.spoken || opts.purpose === 'automation' || settings.speakAllReplies)
     let out: { reply: string; streamed: boolean; cost: number; model: string }
     try {
       out =

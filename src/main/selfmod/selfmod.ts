@@ -10,6 +10,8 @@ import type { CodeChange, FileEdit } from '@shared/types'
 import { codeChanges, getSettings, newId } from '../store'
 
 const BLOCKED = /(^|[\\/])(node_modules|\.git|out|release|dist)([\\/]|$)/
+// The safety net itself can't be edited by JARVIS, so undo always keeps working.
+const PROTECTED = /^src[\\/](main[\\/]selfmod[\\/]|renderer[\\/]src[\\/]components[\\/]ErrorBoundary\.tsx$)/
 const ALLOWED_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|css|html|json|md|yml|yaml|txt|svg)$/i
 
 export function sourceRoot(): string | null {
@@ -35,6 +37,7 @@ function safePath(root: string, rel: string): string {
   if (!full.startsWith(path.resolve(root) + path.sep)) throw new Error(`Path escapes the project: ${rel}`)
   if (BLOCKED.test(path.relative(root, full))) throw new Error(`Editing ${rel} is not allowed`)
   if (!ALLOWED_EXT.test(full)) throw new Error(`File type not editable: ${rel}`)
+  if (PROTECTED.test(path.relative(root, full))) throw new Error(`${rel} is part of the self-modification safety net and can't be changed`)
   return full
 }
 
@@ -131,28 +134,96 @@ async function ensureRepo(root: string): Promise<boolean> {
   }
 }
 
-export async function applyChange(id: string): Promise<CodeChange> {
+// ---------------- safety net ----------------
+// Every applied change keeps a copy of the original files (works without git), and the
+// result is type-checked before it is kept. If the check fails, the originals are restored.
+
+function backupFile(id: string): string {
+  const d = path.join(app.getPath('userData'), 'jarvis-data', 'code-backups')
+  fs.mkdirSync(d, { recursive: true })
+  return path.join(d, `${id}.json`)
+}
+
+interface Backup {
+  root: string
+  files: Record<string, string | null> // relative path -> original content (null = file did not exist)
+}
+
+function restoreBackup(id: string): boolean {
+  const f = backupFile(id)
+  if (!fs.existsSync(f)) return false
+  const b = JSON.parse(fs.readFileSync(f, 'utf8')) as Backup
+  for (const [rel, content] of Object.entries(b.files)) {
+    const full = path.join(b.root, rel)
+    if (content === null) fs.rmSync(full, { force: true })
+    else {
+      fs.mkdirSync(path.dirname(full), { recursive: true })
+      fs.writeFileSync(full, content)
+    }
+  }
+  return true
+}
+
+/** Type-check the project with its own TypeScript compiler. Returns error text, or null if OK. */
+function typecheck(root: string): Promise<string | null> {
+  const tsc = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc')
+  if (!fs.existsSync(tsc)) return Promise.resolve(null) // can't verify; rely on backups
+  const run = (project: string) =>
+    new Promise<string | null>((resolve) => {
+      execFile(
+        process.execPath,
+        [tsc, '--noEmit', '-p', project],
+        { cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 180_000, maxBuffer: 5 * 1024 * 1024 },
+        (err, stdout, stderr) => resolve(err ? (stdout + stderr).trim().slice(0, 4000) || String(err) : null)
+      )
+    })
+  return Promise.all(['tsconfig.node.json', 'tsconfig.web.json'].filter((p) => fs.existsSync(path.join(root, p))).map(run)).then(
+    (errs) => errs.filter(Boolean).join('\n') || null
+  )
+}
+
+export async function applyChange(id: string, onStatus?: (msg: string) => void): Promise<CodeChange> {
   const change = codeChanges.get(id)
   if (!change || change.status !== 'pending') throw new Error('Change not found or not pending')
   const root = requireRoot()
   try {
     const files = computeEdits(root, change.edits)
+    const backup: Backup = { root, files: {} }
+    for (const full of files.keys()) {
+      backup.files[path.relative(root, full)] = fs.existsSync(full) ? fs.readFileSync(full, 'utf8') : null
+    }
+    fs.writeFileSync(backupFile(id), JSON.stringify(backup))
     for (const [full, { after }] of files) {
       fs.mkdirSync(path.dirname(full), { recursive: true })
       fs.writeFileSync(full, after)
     }
+    onStatus?.('Checking the new code for errors…')
+    const errors = await typecheck(root)
+    if (errors) {
+      restoreBackup(id)
+      codeChanges.update(id, {
+        status: 'failed',
+        error: `The change had code errors, so it was undone automatically and nothing changed.\n\n${errors}`
+      })
+      return codeChanges.get(id)!
+    }
     let commit: string | undefined
     if (await ensureRepo(root)) {
-      const rels = [...files.keys()].map((f) => path.relative(root, f))
-      await git(root, ['add', '--', ...rels])
-      await git(root, [
-        '-c', 'user.name=JARVIS', '-c', 'user.email=jarvis@localhost',
-        'commit', '-m', `JARVIS self-modification: ${change.title}\n\n${change.description}`, '--', ...rels
-      ])
-      commit = await git(root, ['rev-parse', 'HEAD'])
+      try {
+        const rels = [...files.keys()].map((f) => path.relative(root, f))
+        await git(root, ['add', '--', ...rels])
+        await git(root, [
+          '-c', 'user.name=JARVIS', '-c', 'user.email=jarvis@localhost',
+          'commit', '-m', `JARVIS self-modification: ${change.title}\n\n${change.description}`, '--', ...rels
+        ])
+        commit = await git(root, ['rev-parse', 'HEAD'])
+      } catch {
+        /* git is optional — the backup still allows undo */
+      }
     }
-    codeChanges.update(id, { status: 'applied', commit })
+    codeChanges.update(id, { status: 'applied', commit, appliedAt: Date.now() })
   } catch (e) {
+    restoreBackup(id)
     codeChanges.update(id, { status: 'failed', error: String(e) })
   }
   return codeChanges.get(id)!
@@ -162,11 +233,31 @@ export function rejectChange(id: string): void {
   codeChanges.update(id, { status: 'rejected' })
 }
 
+export function canRevert(id: string): boolean {
+  const c = codeChanges.get(id)
+  return !!c && c.status === 'applied' && (fs.existsSync(backupFile(id)) || !!c.commit)
+}
+
 export async function revertChange(id: string): Promise<CodeChange> {
   const change = codeChanges.get(id)
-  if (!change?.commit) throw new Error('This change has no commit to revert')
-  const root = requireRoot()
-  await git(root, ['-c', 'user.name=JARVIS', '-c', 'user.email=jarvis@localhost', 'revert', '--no-edit', change.commit])
+  if (!change || change.status !== 'applied') throw new Error('Only applied changes can be undone')
+  if (fs.existsSync(backupFile(id))) {
+    restoreBackup(id)
+  } else if (change.commit) {
+    const root = requireRoot()
+    await git(root, ['-c', 'user.name=JARVIS', '-c', 'user.email=jarvis@localhost', 'revert', '--no-edit', change.commit])
+  } else {
+    throw new Error('No backup of this change exists, so it cannot be undone automatically.')
+  }
   codeChanges.update(id, { status: 'reverted' })
   return codeChanges.get(id)!
+}
+
+/** The most recent change that can still be undone (used by the crash-recovery prompt). */
+export function lastRevertible(): CodeChange | null {
+  const applied = codeChanges
+    .all()
+    .filter((c) => c.status === 'applied' && canRevert(c.id))
+    .sort((a, b) => (b.appliedAt ?? b.created) - (a.appliedAt ?? a.created))
+  return applied[0] ?? null
 }

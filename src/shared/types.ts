@@ -32,6 +32,9 @@ export interface Settings {
   wakeWord: string
   sttModel: string
   ttsEnabled: boolean
+  speakAllReplies: boolean
+  ttsEngine: 'neural' | 'system' | 'elevenlabs'
+  neuralVoice: string
   ttsVoice: string
   ttsRate: number
   elevenLabsVoiceId: string
@@ -74,6 +77,9 @@ export const DEFAULT_SETTINGS: Settings = {
   wakeWord: 'jarvis',
   sttModel: 'onnx-community/whisper-base.en',
   ttsEnabled: true,
+  speakAllReplies: false,
+  ttsEngine: 'neural',
+  neuralVoice: 'bm_george',
   ttsVoice: '',
   ttsRate: 1.05,
   elevenLabsVoiceId: '',
@@ -208,6 +214,7 @@ export interface CodeChange {
   diff: string
   status: 'pending' | 'applied' | 'rejected' | 'failed' | 'reverted'
   created: number
+  appliedAt?: number
   commit?: string
   error?: string
 }

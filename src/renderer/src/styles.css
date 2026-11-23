@@ -303,3 +303,14 @@ details summary { cursor: pointer; margin: 4px 0 10px; }
 .journal .when { width: 120px; flex-shrink: 0; }
 .topic { font-size: 10.5px; border: 1px solid var(--line); border-radius: 8px; padding: 1px 6px; margin-right: 4px; color: var(--muted); }
 .page > .btn { align-self: flex-start; }
+
+/* ---------- voice check ---------- */
+.voice-check { display: flex; flex-direction: column; gap: 8px; }
+.vc-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.vc-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+.vc-dot.ready { background: var(--good); box-shadow: 0 0 8px var(--good); }
+.vc-dot.loading { background: var(--warn); animation: pulse 1s infinite; }
+.vc-dot.error { background: var(--danger); }
+.heard { margin-top: 4px; color: var(--accent); }
+.crash { max-width: 640px; margin: 80px auto; display: flex; flex-direction: column; gap: 14px; padding: 24px; }
+.voice-mode { font-size: 12px; padding: 6px 8px; margin-bottom: 4px; }

@@ -15,6 +15,7 @@ export interface AppState {
   toasts: { id: number; text: string }[]
   modelProgress: string | null
   level: number
+  sttStatus: { state: 'idle' | 'loading' | 'ready' | 'error'; detail: string }
 }
 
 let state: AppState = {
@@ -27,7 +28,8 @@ let state: AppState = {
   confirms: [],
   toasts: [],
   modelProgress: null,
-  level: 0
+  level: 0,
+  sttStatus: { state: 'idle', detail: 'Voice input is off' }
 }
 const subs = new Set<() => void>()
 

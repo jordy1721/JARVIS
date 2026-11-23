@@ -1,4 +1,4 @@
-import { setState, useStore, type Page } from '../store'
+import { api, setState, useStore, type Page } from '../store'
 import { Orb } from './Orb'
 import { voice } from '../voice/instance'
 
@@ -42,6 +42,18 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="sidebar-foot">
+        {settings && (
+          <select
+            className="voice-mode"
+            value={settings.voiceMode}
+            title="Voice input"
+            onChange={(e) => api.invoke('settings:set', { voiceMode: e.target.value })}
+          >
+            <option value="push-to-talk">🎙 Push to talk</option>
+            <option value="open-mic">🎙 Always listening</option>
+            <option value="off">🎙 Voice off</option>
+          </select>
+        )}
         {settings && settings.voiceMode !== 'off' && (
           <div className="hint">
             {settings.voiceMode === 'push-to-talk' ? (

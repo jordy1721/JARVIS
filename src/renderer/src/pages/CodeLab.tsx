@@ -52,7 +52,7 @@ export function CodeLab() {
       </header>
       <p className="muted">
         Ask {''}JARVIS to change itself — new features, a different look, new abilities. It reads its own source and proposes a change; nothing is applied until you approve the
-        diff below. Every applied change is a git commit you can revert.
+        diff below. Approved changes are checked for errors first (and undone automatically if they fail), and you can always undo them here, from the tray icon, or from the recovery prompt if the screen ever fails to load.
       </p>
       {!root && (
         <div className="alert subtle">
@@ -83,15 +83,24 @@ export function CodeLab() {
                   <button className="btn ghost small" disabled={busy} onClick={() => act(() => api.invoke('code:reject', c.id), 'Change rejected')}>
                     Reject
                   </button>
-                  <button className="btn primary small" disabled={busy} onClick={() => act(() => api.invoke('code:apply', c.id), 'Change applied')}>
-                    Approve & apply
+                  <button
+                    className="btn primary small"
+                    disabled={busy}
+                    onClick={() =>
+                      act(async () => {
+                        const r = await api.invoke<CodeChange>('code:apply', c.id)
+                        if (r.status === 'failed') throw new Error('it had errors and was undone automatically — see details below')
+                      }, 'Change applied and checked')
+                    }
+                  >
+                    {busy ? 'Applying & checking…' : 'Approve & apply'}
                   </button>
                 </>
               )}
               {c.status === 'applied' && (
                 <>
-                  <button className="btn ghost small" disabled={busy || !c.commit} onClick={() => act(() => api.invoke('code:revert', c.id), 'Change reverted')}>
-                    Revert
+                  <button className="btn ghost small" disabled={busy} onClick={() => act(() => api.invoke('code:revert', c.id), 'Change undone')}>
+                    Undo
                   </button>
                   <button className="btn primary small" onClick={() => api.invoke('app:restart')}>
                     Restart to load

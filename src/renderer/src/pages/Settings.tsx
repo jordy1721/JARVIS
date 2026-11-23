@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { ConnectionStatus, Settings } from '@shared/types'
 import { api, toast, useStore } from '../store'
-import { listVoices, speak } from '../voice/tts'
+import { listVoices, onTtsStatus, speak, stopSpeaking, type TtsStatus } from '../voice/tts'
+import { voice } from '../voice/instance'
 
 const MODELS = [
   ['claude-haiku-5-5', 'Claude Haiku 5.5 — $0.10 / $0.50 per M tokens (cheapest)'],
@@ -13,6 +14,18 @@ const SUB_MODELS = [
   ['haiku', 'Haiku — fastest, uses the least of your plan'],
   ['sonnet', 'Sonnet — balanced'],
   ['opus', 'Opus — smartest, uses your plan fastest']
+]
+const NEURAL_VOICES = [
+  ['bm_george', 'George — British male (JARVIS default)'],
+  ['bm_fable', 'Fable — British male'],
+  ['bm_lewis', 'Lewis — British male, deeper'],
+  ['bm_daniel', 'Daniel — British male, softer'],
+  ['bf_emma', 'Emma — British female'],
+  ['bf_isabella', 'Isabella — British female'],
+  ['am_michael', 'Michael — American male'],
+  ['am_fenrir', 'Fenrir — American male'],
+  ['af_heart', 'Heart — American female (highest rated)'],
+  ['af_bella', 'Bella — American female']
 ]
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const STT = [
@@ -140,52 +153,7 @@ export function SettingsPage() {
         </Field>
       </Section>
 
-      <Section title="Voice" desc="Speech recognition runs locally on your computer (free, private). The model downloads once on first use.">
-        <Field label="Input mode">
-          {select('voiceMode', [
-            ['push-to-talk', 'Push to talk (press hotkey, speak, press again)'],
-            ['open-mic', 'Open mic (always listening)'],
-            ['off', 'Off']
-          ])}
-        </Field>
-        <Field label="Push-to-talk hotkey" hint="Electron accelerator, e.g. CommandOrControl+Shift+Space">
-          {text('pushToTalkHotkey')}
-        </Field>
-        <Field label="Require wake word in open-mic mode">{bool('requireWakeWord')}</Field>
-        <Field label="Wake word">{text('wakeWord')}</Field>
-        <Field label="Speech recognition model">{select('sttModel', STT)}</Field>
-        <Field label="Speak replies to voice requests">{bool('ttsEnabled')}</Field>
-        <Field label="Voice">
-          <div className="row">
-            <select value={s.ttsVoice} onChange={(e) => set({ ttsVoice: e.target.value })} className="grow">
-              <option value="">Automatic (British voice if available)</option>
-              {listVoices().map((v) => (
-                <option key={v.name} value={v.name}>
-                  {v.name} ({v.lang})
-                </option>
-              ))}
-            </select>
-            <button className="btn ghost" onClick={() => speak(`Good day${s.userName ? ', ' + s.userName : ''}. All systems are online.`)}>
-              Test
-            </button>
-          </div>
-        </Field>
-        <Field label="Speaking rate">{num('ttsRate', 0.05, 0.5)}</Field>
-        <details>
-          <summary className="muted small">Premium voice (optional, ElevenLabs — costs extra)</summary>
-          <Field label="ElevenLabs API key">
-            <div className="row">
-              <input type="password" className="grow" value={elevenKey} onChange={(e) => setElevenKey(e.target.value)} />
-              <button className="btn ghost" onClick={() => api.invoke('secret:set', 'elevenlabs', elevenKey).then(() => (setElevenKey(''), toast('Saved')))}>
-                Save
-              </button>
-            </div>
-          </Field>
-          <Field label="ElevenLabs voice ID" hint="Leave empty to use the free system voice">
-            {text('elevenLabsVoiceId')}
-          </Field>
-        </details>
-      </Section>
+      <VoiceSection s={s} set={set} select={select} text={text} num={num} bool={bool} elevenKey={elevenKey} setElevenKey={setElevenKey} />
 
       <Section title="Computer control & safety">
         <Field label="Approval mode">
@@ -328,6 +296,123 @@ function Connection(p: {
           </div>
         </Field>
       )}
+    </Section>
+  )
+}
+
+type Ctl = (k: keyof Settings, ...rest: any[]) => ReactNode
+
+function VoiceSection(p: {
+  s: Settings
+  set: (patch: Partial<Settings>) => Promise<unknown>
+  select: Ctl
+  text: Ctl
+  num: Ctl
+  bool: Ctl
+  elevenKey: string
+  setElevenKey: (v: string) => void
+}) {
+  const { s, set, select, text, num, bool } = p
+  const stt = useStore((st) => st.sttStatus)
+  const [tts, setTts] = useState<TtsStatus>({ state: 'idle', detail: '' })
+  const [heard, setHeard] = useState<string | null>(null)
+  const [recording, setRecording] = useState(false)
+  useEffect(() => onTtsStatus(setTts), [])
+  const sample = `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}${s.userName ? ', ' + s.userName : ''}. All systems are online and at your service.`
+
+  return (
+    <Section title="Voice" desc="Speech recognition and the neural voice both run on your own computer: free, private, and offline after a one-time download.">
+      <div className="voice-check">
+        <div className="vc-row">
+          <span className={`vc-dot ${s.voiceMode === 'off' ? 'idle' : stt.state}`} />
+          <div className="grow">
+            <b>Hearing you</b>
+            <div className="muted small">{s.voiceMode === 'off' ? 'Voice input is off' : stt.detail}</div>
+            {heard !== null && <div className="small heard">I heard: “{heard}”</div>}
+          </div>
+          <button
+            className="btn ghost"
+            disabled={recording || s.voiceMode === 'off'}
+            onClick={async () => {
+              setRecording(true)
+              setHeard(null)
+              try {
+                setHeard(await voice.testMicrophone(4))
+              } catch (e) {
+                setHeard(`(microphone error: ${(e as Error).message})`)
+              }
+              setRecording(false)
+            }}
+          >
+            {recording ? 'Listening for 4 s… speak now' : 'Test microphone'}
+          </button>
+        </div>
+        <div className="vc-row">
+          <span className={`vc-dot ${s.ttsEngine === 'neural' ? tts.state : 'ready'}`} />
+          <div className="grow">
+            <b>Speaking to you</b>
+            <div className="muted small">
+              {s.ttsEngine === 'neural' ? tts.detail || 'Neural voice' : s.ttsEngine === 'system' ? 'Windows/macOS built-in voice' : 'ElevenLabs voice'}
+            </div>
+          </div>
+          <button className="btn ghost" onClick={() => (stopSpeaking(), speak(sample))}>
+            Test voice
+          </button>
+        </div>
+      </div>
+
+      <Field label="Input mode">
+        {select('voiceMode', [
+          ['push-to-talk', 'Push to talk (press hotkey, speak, press again)'],
+          ['open-mic', 'Open mic — always listening for the wake word'],
+          ['off', 'Off']
+        ])}
+      </Field>
+      <Field label="Push-to-talk hotkey" hint="e.g. CommandOrControl+Shift+Space">
+        {text('pushToTalkHotkey')}
+      </Field>
+      <Field label="Require wake word in open-mic mode">{bool('requireWakeWord')}</Field>
+      <Field label="Wake word" hint="Close mishearings like “Java's” also count">
+        {text('wakeWord')}
+      </Field>
+      <Field label="Speech recognition model">{select('sttModel', STT)}</Field>
+
+      <Field label="Speak replies to voice requests">{bool('ttsEnabled')}</Field>
+      <Field label="Also speak replies to typed messages">{bool('speakAllReplies')}</Field>
+      <Field label="Voice engine">
+        {select('ttsEngine', [
+          ['neural', 'Neural voice — high quality, free, runs locally (recommended)'],
+          ['system', 'System voice — built into Windows/macOS'],
+          ['elevenlabs', 'ElevenLabs — premium, paid']
+        ])}
+      </Field>
+      {s.ttsEngine === 'neural' && <Field label="Neural voice">{select('neuralVoice', NEURAL_VOICES)}</Field>}
+      {s.ttsEngine === 'system' && (
+        <Field label="System voice" hint="“Natural” voices sound best if Windows has them">
+          <select value={s.ttsVoice} onChange={(e) => set({ ttsVoice: e.target.value })}>
+            <option value="">Automatic (best available)</option>
+            {listVoices().map((v) => (
+              <option key={v.name} value={v.name}>
+                {v.name} ({v.lang})
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {s.ttsEngine === 'elevenlabs' && (
+        <>
+          <Field label="ElevenLabs API key">
+            <div className="row">
+              <input type="password" className="grow" value={p.elevenKey} onChange={(e) => p.setElevenKey(e.target.value)} />
+              <button className="btn ghost" onClick={() => api.invoke('secret:set', 'elevenlabs', p.elevenKey).then(() => (p.setElevenKey(''), toast('Saved')))}>
+                Save
+              </button>
+            </div>
+          </Field>
+          <Field label="ElevenLabs voice ID">{text('elevenLabsVoiceId')}</Field>
+        </>
+      )}
+      <Field label="Speaking speed">{num('ttsRate', 0.05, 0.5)}</Field>
     </Section>
   )
 }
