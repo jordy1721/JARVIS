@@ -13,6 +13,16 @@ A desktop app (Windows, macOS, Linux) that gives Claude hands, eyes, ears and a 
 
 ## Quick start
 
+### Windows (easiest)
+
+1. Install **Node.js LTS** from [nodejs.org](https://nodejs.org).
+2. Get JARVIS: either install [Git for Windows](https://git-scm.com/download/win) and clone this repo, or download it as a ZIP from GitHub (green **Code** button → **Download ZIP**) and extract it, e.g. to `Documents\JARVIS`.
+3. Open that folder and double-click **`start-jarvis.bat`**. The first run installs everything, which takes a few minutes. After that it just starts JARVIS.
+
+> Don't run `npm` from `C:\Windows\system32`, which is where an administrator PowerShell window starts. npm has to be run inside the JARVIS folder.
+
+### Any OS (terminal)
+
 You'll need **Node.js 20+** and **git**.
 
 ```bash
