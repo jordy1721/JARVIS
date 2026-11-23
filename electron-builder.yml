@@ -9,6 +9,7 @@ files:
 asarUnpack:
   - node_modules/@nut-tree-fork/**
   - out/main/mcp-bridge.js
+  - out/main/chunks/**
 mac:
   category: public.app-category.productivity
   extendInfo:

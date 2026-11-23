@@ -27,6 +27,15 @@ if not exist "node_modules\" (
   )
 )
 
+rem Make sure the Electron runtime has been downloaded (newer Electron versions don't do this during npm install).
+call npx --no-install install-electron
+if errorlevel 1 (
+  echo.
+  echo  Could not download the Electron runtime. Check your internet connection and run this file again.
+  pause
+  exit /b 1
+)
+
 echo.
 echo  Starting JARVIS... (keep this window open while JARVIS is running)
 echo.
